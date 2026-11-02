@@ -209,6 +209,14 @@ public class MergeCheck {
             int[][] truth = new int[queries][];
             for (int q = 0; q < queries; q++) truth[q] = exactTopK(qs.get(q), byOrdinal, k);
 
+            // reference for what the merge replaces: a fresh full build over exactly the live vectors (same M, beam, alpha, overflow, hierarchy, similarity), ordinal = output ordinal
+            long tb = System.nanoTime();
+            GraphIndexBuilder fresh = new GraphIndexBuilder(BuildScoreProvider.randomAccessScoreProvider(mergedRavv, VSF), dim, m, beam, 1.2f, 1.2f, hier, true, pool, pool);
+            IntStream.range(0, liveCount).parallel().forEach(i -> fresh.addGraphNode(i, mergedRavv.getVector(i)));
+            fresh.cleanup();
+            double rebuildSeconds = (System.nanoTime() - tb) / 1e9;
+            var freshGraph = fresh.getGraph();
+
             for (int ef : efs) {
                 // merged graph
                 long hitsMerged = 0;
@@ -243,11 +251,26 @@ public class MergeCheck {
                     for (GraphSearcher gs : searchers) gs.close();
                 }
                 double sepMs = (System.nanoTime() - tq) / 1e6 / queries;
+                // fresh full build over the live vectors
+                long hitsRebuild = 0;
+                tq = System.nanoTime();
+                try (GraphSearcher searcher = new GraphSearcher(freshGraph)) {
+                    for (int q = 0; q < queries; q++) {
+                        var ssp = DefaultSearchScoreProvider.exact(qs.get(q), VSF, mergedRavv);
+                        SearchResult r = searcher.search(ssp, k, ef, 0.0f, 0.0f, Bits.ALL);
+                        hitsRebuild += overlap(truth[q], Arrays.stream(r.getNodes()).mapToInt(ns -> ns.node).toArray());
+                    }
+                }
+                double rebuildMs = (System.nanoTime() - tq) / 1e6 / queries;
                 double denom = (double) queries * k;
                 out.result("recall ef=" + ef + " k=" + k + " merged=" + String.format("%.4f", hitsMerged / denom)
                            + " separate_sources_topk_merge=" + String.format("%.4f", hitsSeparate / denom)
                            + " merged_ms_per_query=" + String.format("%.3f", mergedMs) + " separate_ms_per_query=" + String.format("%.3f", sepMs));
+                out.result("rebuild ef=" + ef + " k=" + k + " recall=" + String.format("%.4f", hitsRebuild / denom)
+                           + " ms_per_query=" + String.format("%.3f", rebuildMs) + " build_seconds=" + String.format("%.2f", rebuildSeconds)
+                           + " merged_minus_rebuild=" + String.format("%.4f", (hitsMerged - hitsRebuild) / denom));
             }
+            fresh.close();
             out.result("done");
         } finally {
             for (ReaderSupplier rs : readers) { try { rs.close(); } catch (Exception ignored) { } }

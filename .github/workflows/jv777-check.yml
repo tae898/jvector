@@ -10,10 +10,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # round 2: attribute the JDK 25 head failure (TestVectorSourceCompatibility.pqWidthsCenteringAndClusterCounts, 1-ulp score difference): full suite on the base, JDK 25 only
-        jdk: [ 25 ]
+        # round 3: MergeCheck with the fresh-rebuild reference, head only, JDK 21 and 25
+        jdk: [ 21, 25 ]
         target:
-          - { name: base, sha: 4f13ff42e93f2e7b16020de3aaeefe9372e0dd36, phases: "full" }
+          - { name: head, sha: 7fd3e46708b344db93975513dd6c19cff9f475e4, phases: "mergecheck" }
     steps:
       - uses: actions/checkout@v4
         with:
