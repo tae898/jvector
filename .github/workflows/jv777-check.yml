@@ -1,0 +1,59 @@
+# Hosted ubuntu-latest has 4 cores and 16 GB, no cpuset discipline needed, JDK 21 and 25 in parallel, base and head as a matrix.
+name: jv777-check
+on:
+  push:
+    branches: [jv777-check]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [ 21, 25 ]
+        target:
+          - { name: head, sha: 7fd3e46708b344db93975513dd6c19cff9f475e4, phases: "compactor mergecheck full" }
+          - { name: base, sha: 4f13ff42e93f2e7b16020de3aaeefe9372e0dd36, phases: "compactor" }
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: study
+      - uses: actions/checkout@v4
+        with:
+          repository: datastax/jvector
+          ref: ${{ matrix.target.sha }}
+          path: jvector
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.jdk }}
+          cache: maven
+      - name: Add MergeCheck (head only)
+        if: contains(matrix.target.phases, 'mergecheck')
+        run: |
+          mkdir -p jvector/jvector-tests/src/test/java/mergecheck
+          cp study/ci/MergeCheck.java jvector/jvector-tests/src/test/java/mergecheck/MergeCheck.java
+      - name: Phases
+        working-directory: jvector
+        env:
+          MC_RESULT: ${{ github.workspace }}/mergecheck.result
+        run: |
+          rc=0
+          for phase in ${{ matrix.target.phases }}; do
+            case $phase in
+              compactor) sel="-Dtest=TestOnDiskGraphIndexCompactor*" ;;
+              mergecheck) sel="-Dtest=MergeCheck" ;;
+              full) sel="" ;;
+            esac
+            rm -rf jvector-tests/target/surefire-reports
+            mvn -B -ntp -Pjdk20 -pl jvector-tests -am test -Dsurefire.failIfNoSpecifiedTests=false $sel || rc=$?
+            mkdir -p "$GITHUB_WORKSPACE/out/$phase" && cp -r jvector-tests/target/surefire-reports/. "$GITHUB_WORKSPACE/out/$phase/" || true
+          done
+          exit $rc
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jv777-${{ matrix.target.name }}-jdk${{ matrix.jdk }}
+          path: |
+            out
+            mergecheck.result
