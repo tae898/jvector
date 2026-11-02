@@ -10,10 +10,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # round 3: MergeCheck with the fresh-rebuild reference, head only, JDK 21 and 25
+        # round 4: is the JDK 25 head failure in TestVectorSourceCompatibility flaky? run that class 10 times on head and base, JDK 21 (control) and 25
         jdk: [ 21, 25 ]
         target:
-          - { name: head, sha: 7fd3e46708b344db93975513dd6c19cff9f475e4, phases: "mergecheck" }
+          - { name: head, sha: 7fd3e46708b344db93975513dd6c19cff9f475e4, phases: "repeat" }
+          - { name: base, sha: 4f13ff42e93f2e7b16020de3aaeefe9372e0dd36, phases: "repeat" }
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,6 +41,19 @@ jobs:
         run: |
           rc=0
           for phase in ${{ matrix.target.phases }}; do
+            if [ "$phase" = repeat ]; then
+              log="$GITHUB_WORKSPACE/repeat.log"; : > "$log"
+              # warm-up: one online run fills the Maven cache (not counted)
+              mvn -B -ntp -Pjdk20 -pl jvector-tests -am test -Dsurefire.failIfNoSpecifiedTests=false -Dtest=TestVectorSourceCompatibility > "$GITHUB_WORKSPACE/warmup.log" 2>&1 && echo "RESULT warmup=pass" || echo "RESULT warmup=fail"
+              grep -o 'expected:<[^>]*> but was:<[^>]*>' "$GITHUB_WORKSPACE/warmup.log" | sort | uniq -c | sed 's/^/RESULT warmup_mismatch /' || true
+              fails=0
+              for i in $(seq 1 10); do
+                mvn -B -ntp -o -Pjdk20 -pl jvector-tests -am test -Dsurefire.failIfNoSpecifiedTests=false -Dtest=TestVectorSourceCompatibility >> "$log" 2>&1 || fails=$((fails+1))
+              done
+              echo "RESULT repeats=10 failures=$fails java=$(java -version 2>&1 | head -1) target=${{ matrix.target.name }} offline_resolution_errors=$(grep -c 'Could not resolve\|offline mode' "$log" || true) tests_run_lines=$(grep -c 'Tests run:.*TestVectorSourceCompatibility' "$log" || true)" | tee "$GITHUB_WORKSPACE/mergecheck.result"
+              grep -o 'expected:<[^>]*> but was:<[^>]*>' "$log" | sort | uniq -c | sed 's/^/RESULT mismatch /' | tee -a "$GITHUB_WORKSPACE/mergecheck.result" || true
+              continue
+            fi
             case $phase in
               compactor) sel="-Dtest=TestOnDiskGraphIndexCompactor*" ;;
               mergecheck) sel="-Dtest=MergeCheck" ;;
@@ -57,3 +71,5 @@ jobs:
           path: |
             out
             mergecheck.result
+            repeat.log
+            warmup.log
