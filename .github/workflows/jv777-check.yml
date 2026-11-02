@@ -10,10 +10,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        jdk: [ 21, 25 ]
+        # round 2: attribute the JDK 25 head failure (TestVectorSourceCompatibility.pqWidthsCenteringAndClusterCounts, 1-ulp score difference): full suite on the base, JDK 25 only
+        jdk: [ 25 ]
         target:
-          - { name: head, sha: 7fd3e46708b344db93975513dd6c19cff9f475e4, phases: "compactor mergecheck full" }
-          - { name: base, sha: 4f13ff42e93f2e7b16020de3aaeefe9372e0dd36, phases: "compactor" }
+          - { name: base, sha: 4f13ff42e93f2e7b16020de3aaeefe9372e0dd36, phases: "full" }
     steps:
       - uses: actions/checkout@v4
         with:
